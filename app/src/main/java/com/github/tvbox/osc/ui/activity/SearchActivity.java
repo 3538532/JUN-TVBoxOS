@@ -2,6 +2,7 @@ package com.github.tvbox.osc.ui.activity;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -36,6 +37,7 @@ import com.github.tvbox.osc.ui.tv.QRCodeGen;
 import com.github.tvbox.osc.ui.tv.widget.SearchKeyboard;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.HawkConfig;
+import com.github.tvbox.osc.util.LOG;
 import com.github.tvbox.osc.util.SearchHelper;
 import com.github.tvbox.osc.util.js.JSEngine;
 import com.github.tvbox.osc.viewmodel.SourceViewModel;
@@ -83,7 +85,7 @@ public class SearchActivity extends BaseActivity {
     private String searchTitle = "";
     private TextView tvSearchCheckboxBtn;
 
-    private HashMap<String, String> mCheckSources = null;
+    private static HashMap<String, String> mCheckSources = null;
     private SearchCheckboxDialog mSearchCheckboxDialog = null;
 
     @Override
@@ -93,12 +95,14 @@ public class SearchActivity extends BaseActivity {
 
 
     private static Boolean hasKeyBoard;
+    private static Boolean isSearchBack;
     @Override
     protected void init() {
-        disableKeyboard(SearchActivity.this);
         initView();
         initViewModel();
         initData();
+        hasKeyBoard = true;
+        isSearchBack = false;
     }
 
     /*
@@ -137,6 +141,15 @@ public class SearchActivity extends BaseActivity {
             }
             pauseRunnable.clear();
             pauseRunnable = null;
+        }
+        if (hasKeyBoard) {
+            tvSearch.requestFocus();
+            tvSearch.requestFocusFromTouch();
+        }else {
+            if(!isSearchBack){
+                etSearch.requestFocus();
+                etSearch.requestFocusFromTouch();
+            }
         }
     }
 
@@ -180,12 +193,14 @@ public class SearchActivity extends BaseActivity {
                     try {
                         if (searchExecutorService != null) {
                             pauseRunnable = searchExecutorService.shutdownNow();
-                            JSEngine.getInstance().stopAll();
                             searchExecutorService = null;
+                            JSEngine.getInstance().stopAll();
                         }
                     } catch (Throwable th) {
                         th.printStackTrace();
                     }
+                    hasKeyBoard = false;
+                    isSearchBack = true;
                     Bundle bundle = new Bundle();
                     bundle.putString("id", video.id);
                     bundle.putString("sourceKey", video.sourceKey);
@@ -197,6 +212,7 @@ public class SearchActivity extends BaseActivity {
             @Override
             public void onClick(View v) {
                 FastClickCheckUtil.check(v);
+                hasKeyBoard = true;
                 String wd = etSearch.getText().toString().trim();
                 if (!TextUtils.isEmpty(wd)) {
                     search(wd);
@@ -212,15 +228,14 @@ public class SearchActivity extends BaseActivity {
                 etSearch.setText("");
             }
         });
-        etSearch.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-//                Toast.makeText(mContext,"点击",Toast.LENGTH_SHORT).show();
-                if(!hasKeyBoard)enableKeyboard(SearchActivity.this);
-                openSystemKeyBoard();//再次尝试拉起键盘
-                SearchActivity.this.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
-            }
-        });
+//        etSearch.setOnClickListener(new View.OnClickListener() {
+//            @Override
+//            public void onClick(View v) {
+//                enableKeyboard(SearchActivity.this);
+//                openSystemKeyBoard();//再次尝试拉起键盘
+//                SearchActivity.this.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
+//            }
+//        });
 
 //        etSearch.setOnFocusChangeListener(tvSearchFocusChangeListener);
         keyboard.setOnSearchKeyListener(new SearchKeyboard.OnSearchKeyListener() {
@@ -262,6 +277,12 @@ public class SearchActivity extends BaseActivity {
                     }
                     mSearchCheckboxDialog = new SearchCheckboxDialog(SearchActivity.this, searchAbleSource, mCheckSources);
                 }
+                mSearchCheckboxDialog.setOnDismissListener(new DialogInterface.OnDismissListener() {
+                    @Override
+                    public void onDismiss(DialogInterface dialog) {
+                        dialog.dismiss();
+                    }
+                });
                 mSearchCheckboxDialog.show();
             }
         });
@@ -375,7 +396,7 @@ public class SearchActivity extends BaseActivity {
     private void refreshQRCode() {
         String address = ControlManager.get().getAddress(false);
         tvAddress.setText(String.format("远程搜索使用手机/电脑扫描下面二维码或者直接浏览器访问地址\n%s", address));
-        ivQRCode.setImageBitmap(QRCodeGen.generateBitmap(address, 300, 300));
+        ivQRCode.setImageBitmap(QRCodeGen.generateBitmap(address + "search.html", 300, 300));
     }
 
     @Subscribe(threadMode = ThreadMode.MAIN)
@@ -402,6 +423,10 @@ public class SearchActivity extends BaseActivity {
         mCheckSources = SearchHelper.getSourcesForSearch();
     }
 
+    public static void setCheckedSourcesForSearch(HashMap<String,String> checkedSources) {
+        mCheckSources = checkedSources;
+    }
+
     private void search(String title) {
         cancel();
         showLoading();
@@ -418,8 +443,8 @@ public class SearchActivity extends BaseActivity {
         try {
             if (searchExecutorService != null) {
                 searchExecutorService.shutdownNow();
-                JSEngine.getInstance().stopAll();
                 searchExecutorService = null;
+                JSEngine.getInstance().stopAll();
             }
         } catch (Throwable th) {
             th.printStackTrace();
@@ -460,12 +485,22 @@ public class SearchActivity extends BaseActivity {
         }
     }
 
+    private boolean matchSearchResult(String name, String searchTitle) {
+        if (TextUtils.isEmpty(name) || TextUtils.isEmpty(searchTitle)) return false;
+        searchTitle = searchTitle.trim();
+        String[] arr = searchTitle.split("\\s+");
+        int matchNum = 0;
+        for(String one : arr) {
+            if (name.contains(one)) matchNum++;
+        }
+        return matchNum == arr.length ? true : false;
+    }
+
     private void searchData(AbsXml absXml) {
         if (absXml != null && absXml.movie != null && absXml.movie.videoList != null && absXml.movie.videoList.size() > 0) {
             List<Movie.Video> data = new ArrayList<>();
             for (Movie.Video video : absXml.movie.videoList) {
-                if (video.name.contains(searchTitle))
-                    data.add(video);
+                if (matchSearchResult(video.name, searchTitle)) data.add(video);
             }
             if (searchAdapter.getData().size() > 0) {
                 searchAdapter.addData(data);
@@ -497,26 +532,12 @@ public class SearchActivity extends BaseActivity {
         try {
             if (searchExecutorService != null) {
                 searchExecutorService.shutdownNow();
-                JSEngine.getInstance().stopAll();
                 searchExecutorService = null;
+                JSEngine.getInstance().stopAll();
             }
         } catch (Throwable th) {
             th.printStackTrace();
         }
         EventBus.getDefault().unregister(this);
     }
-
-//    @Override
-//    public boolean dispatchKeyEvent(KeyEvent event) {
-//        if (event.getAction() == KeyEvent.ACTION_DOWN) {
-//            int keyCode = event.getKeyCode();
-//            if (keyCode == KeyEvent.KEYCODE_MENU) {
-//                if(!hasKeyBoard)enableKeyboard(SearchActivity.this);
-//                openSystemKeyBoard();//再次尝试拉起键盘
-//                getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
-//            }
-//        } else if (event.getAction() == KeyEvent.ACTION_UP) {
-//        }
-//        return super.dispatchKeyEvent(event);
-//    }
 }

@@ -14,23 +14,21 @@ import com.github.tvbox.quickjs.JSCallFunction;
 import com.github.tvbox.quickjs.JSModule;
 import com.github.tvbox.quickjs.JSObject;
 import com.github.tvbox.quickjs.QuickJSContext;
+import com.google.gson.Gson;
 import com.lzy.okgo.OkGo;
 
 import org.json.JSONObject;
-import org.jsoup.Jsoup;
-import org.jsoup.nodes.Document;
-import org.jsoup.nodes.Element;
-import org.jsoup.select.Elements;
 
 import java.io.InputStream;
 import java.net.URL;
-import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 import okhttp3.Headers;
 import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
@@ -215,10 +213,10 @@ public class JSEngine {
                             }
                         }
                         Headers headers = headerBuilder.build();
-                        String method = opt.optString("method").toLowerCase();
+                        String method = opt.optString("method", "get");
                         Request.Builder requestBuilder = new Request.Builder().url(url).headers(headers).tag("js_okhttp_tag");
                         Request request = null;
-                        if (method.equals("post")) {
+                        if (method.equalsIgnoreCase("post")) {
                             RequestBody body = null;
                             String data = opt.optString("data", "").trim();
                             if (!data.isEmpty()) {
@@ -234,12 +232,28 @@ public class JSEngine {
                                 body = RequestBody.create(null, "");
                             }
                             request = requestBuilder.post(body).build();
-                        } else if (method.equals("header")) {
+                        } else if (method.equalsIgnoreCase("header")) {
                             request = requestBuilder.head().build();
                         } else {
                             request = requestBuilder.get().build();
                         }
-                        Response response = opt.optInt("redirect", 1) == 1 ? OkGoHelper.getDefaultClient().newCall(request).execute() : OkGoHelper.getNoRedirectClient().newCall(request).execute();
+                        int redirect = opt.optInt("redirect", 1);
+                        OkHttpClient client = null;
+                        if (redirect == 1) {
+                            client  = OkGoHelper.getDefaultClient();
+                        } else {
+                            client  = OkGoHelper.getNoRedirectClient();
+                        }
+                        OkHttpClient.Builder clientBuilder = client.newBuilder();
+                        int timeout = 10000;
+                        if (opt.has("timeout")) {
+                            timeout = opt.optInt("timeout");
+                        }
+                        clientBuilder.readTimeout(timeout, TimeUnit.MILLISECONDS);
+                        clientBuilder.writeTimeout(timeout, TimeUnit.MILLISECONDS);
+                        clientBuilder.connectTimeout(timeout, TimeUnit.MILLISECONDS);
+                        Response response = clientBuilder.build().newCall(request).execute();
+
                         JSObject jsObject = jsContext.createNewJSObject();
                         Set<String> resHeaders = response.headers().names();
                         JSObject resHeader = jsContext.createNewJSObject();
@@ -271,7 +285,11 @@ public class JSEngine {
                     } catch (Throwable throwable) {
                         throwable.printStackTrace();
                     }
-                    return "";
+                    JSObject jsObject = jsContext.createNewJSObject();
+                    JSObject resHeader = jsContext.createNewJSObject();
+                    jsObject.setProperty("headers", resHeader);
+                    jsObject.setProperty("content", "");
+                    return jsObject;
                 }
             });
             jsContext.getGlobalObject().setProperty("joinUrl", new JSCallFunction() {
@@ -296,35 +314,41 @@ public class JSEngine {
             });
             jsContext.getGlobalObject().setProperty("pdfh", new JSCallFunction() {
                 @Override
-                public Element call(Object... args) {
+                public String call(Object... args) {
                     try {
-                    // TODO
+//                        LOG.i("pdfh----------------:"+args[1].toString().trim());
                         String html=args[0].toString();
-                        Document doc=Jsoup.parse(html);
-                        return doc.selectFirst(args[1].toString().trim());
+                        return HtmlParser.parseDomForUrl(html, args[1].toString().trim(), "");
+                    } catch (Throwable throwable) {
+                        throwable.printStackTrace();
+                    }
+                    return "";
+                }
+            });
+            jsContext.getGlobalObject().setProperty("pdfa", new JSCallFunction() {
+                @Override
+                public Object call(Object... args) {
+                    try {
+//                        LOG.i("pdfa----------------:"+args[1].toString().trim());
+                        String html=args[0].toString();
+                        return jsContext.parseJSON(new Gson().toJson(HtmlParser.parseDomForList(html, args[1].toString().trim())));
                     } catch (Throwable throwable) {
                         throwable.printStackTrace();
                     }
                     return null;
                 }
             });
-            jsContext.getGlobalObject().setProperty("pdfa", new JSCallFunction() {
+            jsContext.getGlobalObject().setProperty("pd", new JSCallFunction() {
                 @Override
-                public ArrayList<String> call(Object... args) {
+                public String call(Object... args) {
                     try {
-                    // TODO
+//                        LOG.i("pd----------------:"+args[2].toString().trim());
                         String html=args[0].toString();
-                        Document doc=Jsoup.parse(html);
-                        Elements list=doc.select(args[1].toString().trim());
-                        ArrayList<String> arraylist=new ArrayList<>();
-                        for (int i = 0; i < list.size(); i++) {
-                            arraylist.add(list.get(i).html());
-                        }
-                        return arraylist;
+                        return HtmlParser.parseDomForUrl(html, args[1].toString().trim(), args[2].toString());
                     } catch (Throwable throwable) {
                         throwable.printStackTrace();
                     }
-                    return null;
+                    return "";
                 }
             });
         }
